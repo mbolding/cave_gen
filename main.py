@@ -27,6 +27,7 @@ STAIRS_UP_COLOR = (0, 100, 255) # Blue
 POTION_COLOR = (255, 50, 200) # Pink/Reddish Potion
 SWORD_COLOR = (0, 255, 255) # Cyan
 SHIELD_COLOR = (150, 150, 255) # Light Blue
+FIREBALL_COLOR = (255, 120, 0) # Orange
 UI_BG_COLOR = (30, 30, 30)
 UI_HEIGHT = 150
 UI_BORDER_COLOR = (100, 100, 100)
@@ -34,6 +35,9 @@ TEXT_COLOR = (240, 240, 240)
 HP_BAR_RED = (200, 0, 0)
 HP_BAR_GREEN = (0, 200, 0)
 POTION_HEAL_AMOUNT = 15
+FIREBALL_COOLDOWN_MS = 30000 # 30 seconds
+FIREBALL_RADIUS = 2
+FIREBALL_DAMAGE = 15
 
 # Gameplay Settings
 # Gameplay Settings
@@ -44,6 +48,7 @@ ENEMY_MOVE_DELAY = 500 # Enemy move speed (slower than player)
 STATE_START = 0
 STATE_PLAYING = 1
 STATE_GAME_OVER = 2
+STATE_TARGETING = 3
 
 
 class Entity:
@@ -186,6 +191,9 @@ class Player(Entity):
         self.armor_tier = 0
         self.update_stats()
         
+        # Spells
+        self.fireball_last_cast_time = -FIREBALL_COOLDOWN_MS # Ready immediately
+        
     def update_stats(self):
         # Stats = Base + Gear
         self.strength = self.base_strength + (self.weapon_tier * 2)
@@ -252,6 +260,31 @@ class Goblin(Entity):
             # Else moved successfully or blocked by wall
 
 
+
+
+
+class Particle:
+    def __init__(self, x, y, color):
+        self.x = x
+        self.y = y
+        self.color = color
+        self.size = random.randint(4, 8)
+        self.life = 1.0 # 1.0 to 0.0
+        self.decay = random.uniform(0.02, 0.05)
+        self.vx = random.uniform(-2, 2)
+        self.vy = random.uniform(-2, 2)
+        
+    def update(self):
+        self.x += self.vx
+        self.y += self.vy
+        self.life -= self.decay
+        self.size -= 0.1
+        
+    def draw(self, surface, camera):
+        if self.life > 0:
+            if self.size < 1: return
+            rect = (self.x + camera.x, self.y + camera.y, int(self.size), int(self.size))
+            pygame.draw.rect(surface, self.color, rect)
 
 
 class MessageLog:
@@ -536,6 +569,9 @@ def main():
     game_state = STATE_START
     show_controls = False
     dungeon_level = 1
+    
+    # Cursor for targeting
+    cursor_x, cursor_y = 0, 0
 
     
     generator = CaveGenerator(MAP_WIDTH, MAP_HEIGHT, FILL_PROB)
@@ -594,7 +630,10 @@ def main():
     last_move_time = 0
     last_enemy_move_time = 0
     
-    def render_view(screen, camera, grid, visible, explored, entities):
+    participants = [] # For particles
+    particles = []
+    
+    def render_view(screen, camera, grid, visible, explored, entities, game_state, cursor_x, cursor_y, particles):
         # Determine accessible range based on camera
         # Camera X is negative offset. 
         # Screen x=0 corresponds to Map x= -camera.x
@@ -649,7 +688,24 @@ def main():
              # Basic visibility check: is entity on a visible tile?
              if (entity.x, entity.y) in visible:
                  entity.draw(screen, TILE_SIZE, camera)
+                 
+        if game_state == STATE_TARGETING:
+            # Draw Cursor
+            cursor_rect = (cursor_x * TILE_SIZE + camera.x, cursor_y * TILE_SIZE + camera.y, TILE_SIZE, TILE_SIZE)
+            pygame.draw.rect(screen, (255, 0, 0), cursor_rect, 2)
+            
+            # Draw AoE preview
+            # Iterate surrounding tiles
+            for ax in range(cursor_x - FIREBALL_RADIUS, cursor_x + FIREBALL_RADIUS + 1):
+                for ay in range(cursor_y - FIREBALL_RADIUS, cursor_y + FIREBALL_RADIUS + 1):
+                     dist = math.sqrt((ax - cursor_x)**2 + (ay - cursor_y)**2)
+                     if dist <= FIREBALL_RADIUS:
+                         r = (ax * TILE_SIZE + camera.x, ay * TILE_SIZE + camera.y, TILE_SIZE, TILE_SIZE)
+                         pygame.draw.rect(screen, (255, 100, 0), r, 1)
 
+        # Draw Particles
+        for p in particles:
+            p.draw(screen, camera)
                     
     def update_minimap():
         minimap_surface.fill((0,0,0))
@@ -735,7 +791,70 @@ def main():
                                 message_log.add_message(f"Glug glug... ({player.potions} left)", (0, 255, 100))
                         else:
                             message_log.add_message("You have no potions!", (150, 150, 150))
+                    elif event.key == pygame.K_f:
+                        # Cast Fireball (Enter Targeting Mode)
+                        current_time = pygame.time.get_ticks()
+                        if current_time - player.fireball_last_cast_time >= FIREBALL_COOLDOWN_MS:
+                            game_state = STATE_TARGETING
+                            cursor_x, cursor_y = player.x, player.y
+                            message_log.add_message("Targeting Fireball (Arrow Keys, SPACE to fire, ESC to cancel)", FIREBALL_COLOR)
+                        else:
+                            remaining = (FIREBALL_COOLDOWN_MS - (current_time - player.fireball_last_cast_time)) // 1000
+                            message_log.add_message(f"Fireball is on cooldown! ({remaining}s)", (150, 150, 150))
+                            
+                elif game_state == STATE_TARGETING:
+                    if event.key == pygame.K_ESCAPE:
+                        game_state = STATE_PLAYING
+                        message_log.add_message("Canceled casting.", (200, 200, 200))
+                    elif event.key == pygame.K_UP: cursor_y -= 1
+                    elif event.key == pygame.K_DOWN: cursor_y += 1
+                    elif event.key == pygame.K_LEFT: cursor_x -= 1
+                    elif event.key == pygame.K_RIGHT: cursor_x += 1
+                    elif event.key == pygame.K_SPACE:
+                        # Fire!
+                        message_log.add_message(f"BOOM! Fireball explodes at ({cursor_x}, {cursor_y})!", FIREBALL_COLOR)
+                        
+                        # AoE Logic
+                        affected_entities = []
+                        # Check distance to all entities
+                        targets = enemies + [player]
+                        count_hits = 0
+                        
+                        for ent in targets:
+                            dist = math.sqrt((ent.x - cursor_x)**2 + (ent.y - cursor_y)**2)
+                            if dist <= FIREBALL_RADIUS:
+                                # Hit
+                                damage = FIREBALL_DAMAGE
+                                ent.hp -= damage
+                                message_log.add_message(f"{ent.name} burns for {damage} dmg!", (255, 100, 50))
+                                
+                                if ent.hp <= 0:
+                                     message_log.add_message(f"{ent.name} is incinerated!", (200, 50, 50))
+                                     if ent.xp_reward > 0 and ent.name != "Player": # Player doesn't give XP to self on death lol
+                                         player.gain_xp(ent.xp_reward, message_log)
+                                         ent.xp_reward = 0
+                                
+                                count_hits += 1
+                        
+                        if count_hits == 0:
+                            message_log.add_message("Review your aim! It hit nothing.", (150, 150, 150))
+                            
+                        # Spawn Particles
+                        center_px = cursor_x * TILE_SIZE + TILE_SIZE // 2
+                        center_py = cursor_y * TILE_SIZE + TILE_SIZE // 2
+                        for _ in range(30):
+                             col = random.choice([(255, 50, 0), (255, 150, 0), (255, 255, 0)])
+                             particles.append(Particle(center_px, center_py, col))
 
+                        player.fireball_last_cast_time = pygame.time.get_ticks()
+                        game_state = STATE_PLAYING
+                        last_move_time = pygame.time.get_ticks() # Reset move timer
+                        
+                        # Process Enemy turns immediately after cast?
+                        # Since we are in a separate loop for input...
+                        # We can just set a flag `player_acted = True` but our architecture is event-based for continuous movement.
+                        # Let's just deduct cooldown on movement.
+                        
         
         if game_state == STATE_START:
             screen.fill((0, 0, 0))
@@ -746,6 +865,7 @@ def main():
                 "Controls:",
                 "Arrow Keys: Move & Attack",
                 "1: Drink Health Potion",
+                "F: Cast Fireball (AoE)",
                 "M: Toggle Minimap",
                 "H: Toggle Controls Popup",
                 "",
@@ -774,143 +894,146 @@ def main():
         if player.hp <= 0:
             game_state = STATE_GAME_OVER
         
-        # Continuous Input Handling
-        keys = pygame.key.get_pressed()
-        dx, dy = 0, 0
-        
-        if keys[pygame.K_UP]: dy -= 1
-        if keys[pygame.K_DOWN]: dy += 1
-        if keys[pygame.K_LEFT]: dx -= 1
-        if keys[pygame.K_RIGHT]: dx += 1
-        
-        if dx != 0 or dy != 0:
-            current_time = pygame.time.get_ticks()
-            if current_time - last_move_time > MOVE_DELAY:
-                # Handle diagonal speed? 
-                # For now, uniform speed logic
-                
-                # Pass all entities (enemies + player) to check collision
-                all_entities = enemies + [player]
-                
-                result = player.try_move(dx, dy, levels[dungeon_level].grid, all_entities)
-                
-                action_taken = False
-                if result is True: # Moved
-                    action_taken = True
-                elif isinstance(result, Entity): # Attacked
-                    player.attack(result, message_log)
-                    action_taken = True
-                
-                elif result == "potion":
-                    # Auto-pickup
-                    player.potions += 1
-                    # Remove from grid
-                    grid[player.x + dx, player.y + dy] = 0
+        if game_state == STATE_PLAYING:
+            # Continuous Input Handling
+            keys = pygame.key.get_pressed()
+            dx, dy = 0, 0
+            
+            if keys[pygame.K_UP]: dy -= 1
+            if keys[pygame.K_DOWN]: dy += 1
+            if keys[pygame.K_LEFT]: dx -= 1
+            if keys[pygame.K_RIGHT]: dx += 1
+            
+            if dx != 0 or dy != 0:
+                current_time = pygame.time.get_ticks()
+                if current_time - last_move_time > MOVE_DELAY:
+                    # Handle diagonal speed? 
+                    # For now, uniform speed logic
                     
-                    # Move player
-                    player.x += dx
-                    player.y += dy
+                    # Pass all entities (enemies + player) to check collision
+                    all_entities = enemies + [player]
                     
-                    message_log.add_message("You pick up a Health Potion.", (255, 100, 255))
-                    action_taken = True
+                    result = player.try_move(dx, dy, levels[dungeon_level].grid, all_entities)
                     
-                elif result == "sword":
-                    player.weapon_tier += 1
-                    player.update_stats()
-                    grid[player.x + dx, player.y + dy] = 0
-                    player.x += dx
-                    player.y += dy
-                    message_log.add_message(f"Upgrade! You found a Weapon Upgrade (+2 Str)!", SWORD_COLOR)
-                    action_taken = True
+                    action_taken = False
+                    if result is True: # Moved
+                        action_taken = True
+                    elif isinstance(result, Entity): # Attacked
+                        player.attack(result, message_log)
+                        action_taken = True
                     
-                elif result == "shield":
-                    player.armor_tier += 1
-                    player.update_stats()
-                    grid[player.x + dx, player.y + dy] = 0
-                    player.x += dx
-                    player.y += dy
-                    message_log.add_message(f"Upgrade! You found an Armor Upgrade (+2 AC)!", SHIELD_COLOR)
-                    action_taken = True
-                
-                elif result == "stairs_down":
-                    # Save current level state
-                    levels[dungeon_level].explored_tiles = explored_tiles.copy()
-                    
-                    dungeon_level += 1
-                    message_log.add_message(f"You descend to level {dungeon_level}...", (255, 255, 0))
-                    
-                    if dungeon_level in levels:
-                        # Load existing level
-                        lvl = levels[dungeon_level]
-                        grid = lvl.grid
-                        explored_tiles = lvl.explored_tiles
-                        enemies = lvl.enemies
-                        player.x, player.y = lvl.up_pos # Spawn at Up stairs
-                    else:
-                        # Generate New Level
-                        grid, up_pos, down_pos = generator.generate(dungeon_level)
+                    elif result == "potion":
+                        # Auto-pickup
+                        player.potions += 1
+                        # Remove from grid
+                        grid[player.x + dx, player.y + dy] = 0
                         
-                        # Generate Enemies
-                        enemies = []
-                        num_enemies = 10 + (dungeon_level * 2)
-                        for _ in range(num_enemies): 
-                            ex, ey = generator.get_random_floor_point()
-                            # Avoid stairs
-                            while (ex, ey) == up_pos or (ex, ey) == down_pos:
-                                ex, ey = generator.get_random_floor_point()
-                                
-                            hp = 10 + dungeon_level
-                            strength = 1 + (dungeon_level // 3)
-                            goblin = Goblin(ex, ey)
-                            goblin.hp = hp
-                            goblin.max_hp = hp
-                            goblin.strength = strength
-                            enemies.append(goblin)
-                            
-                        # Init visited
-                        explored_tiles = set()
+                        # Move player
+                        player.x += dx
+                        player.y += dy
                         
-                        # Save
-                        levels[dungeon_level] = LevelState(grid, explored_tiles, enemies, up_pos, down_pos)
-                        player.x, player.y = up_pos
-
-                    # Common transition updates
-                    visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
-                    explored_tiles.update(visible_tiles)
-                    update_minimap()
-                    action_taken = False 
-
-                elif result == "stairs_up":
-                    if dungeon_level > 1:
-                        # Save current state
+                        message_log.add_message("You pick up a Health Potion.", (255, 100, 255))
+                        action_taken = True
+                        
+                    elif result == "sword":
+                        player.weapon_tier += 1
+                        player.update_stats()
+                        grid[player.x + dx, player.y + dy] = 0
+                        player.x += dx
+                        player.y += dy
+                        message_log.add_message(f"Upgrade! You found a Weapon Upgrade (+2 Str)!", SWORD_COLOR)
+                        action_taken = True
+                        
+                    elif result == "shield":
+                        player.armor_tier += 1
+                        player.update_stats()
+                        grid[player.x + dx, player.y + dy] = 0
+                        player.x += dx
+                        player.y += dy
+                        message_log.add_message(f"Upgrade! You found an Armor Upgrade (+2 AC)!", SHIELD_COLOR)
+                        action_taken = True
+                    
+                    elif result == "stairs_down":
+                        # Save current level state
                         levels[dungeon_level].explored_tiles = explored_tiles.copy()
                         
-                        dungeon_level -= 1
-                        message_log.add_message(f"You ascend to level {dungeon_level}...", (0, 100, 255))
+                        dungeon_level += 1
+                        message_log.add_message(f"You descend to level {dungeon_level}...", (255, 255, 0))
                         
-                        # Load previous level
-                        lvl = levels[dungeon_level]
-                        grid = lvl.grid
-                        explored_tiles = lvl.explored_tiles
-                        enemies = lvl.enemies
-                        player.x, player.y = lvl.down_pos # Spawn at Down stairs
-                        
-                         # Common transition updates
+                        if dungeon_level in levels:
+                            # Load existing level
+                            lvl = levels[dungeon_level]
+                            grid = lvl.grid
+                            explored_tiles = lvl.explored_tiles
+                            enemies = lvl.enemies
+                            player.x, player.y = lvl.up_pos # Spawn at Up stairs
+                        else:
+                            # Generate New Level
+                            grid, up_pos, down_pos = generator.generate(dungeon_level)
+                            
+                            # Generate Enemies
+                            enemies = []
+                            num_enemies = 10 + (dungeon_level * 2)
+                            for _ in range(num_enemies): 
+                                ex, ey = generator.get_random_floor_point()
+                                # Avoid stairs
+                                while (ex, ey) == up_pos or (ex, ey) == down_pos:
+                                    ex, ey = generator.get_random_floor_point()
+                                    
+                                hp = 10 + dungeon_level
+                                strength = 1 + (dungeon_level // 3)
+                                goblin = Goblin(ex, ey)
+                                goblin.hp = hp
+                                goblin.max_hp = hp
+                                goblin.strength = strength
+                                enemies.append(goblin)
+                                
+                            # Init visited
+                            explored_tiles = set()
+                            
+                            # Save
+                            levels[dungeon_level] = LevelState(grid, explored_tiles, enemies, up_pos, down_pos)
+                            player.x, player.y = up_pos
+
+                        # Common transition updates
                         visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
                         explored_tiles.update(visible_tiles)
                         update_minimap()
-                        action_taken = False
-                    else:
-                        message_log.add_message("You cannot leave the cave yet!", (150, 150, 150))
+                        action_taken = False 
 
-                
-                if action_taken:
-                    last_move_time = current_time
-                    # Update FOV
-                    visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
-                    explored_tiles.update(visible_tiles)
-                    # Update minimap
-                    update_minimap()
+                    elif result == "stairs_up":
+                        if dungeon_level > 1:
+                            # Save current state
+                            levels[dungeon_level].explored_tiles = explored_tiles.copy()
+                            
+                            dungeon_level -= 1
+                            message_log.add_message(f"You ascend to level {dungeon_level}...", (0, 100, 255))
+                            
+                            # Load previous level
+                            lvl = levels[dungeon_level]
+                            grid = lvl.grid
+                            explored_tiles = lvl.explored_tiles
+                            enemies = lvl.enemies
+                            player.x, player.y = lvl.down_pos # Spawn at Down stairs
+                            
+                             # Common transition updates
+                            visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
+                            explored_tiles.update(visible_tiles)
+                            update_minimap()
+                            action_taken = False
+                        else:
+                            message_log.add_message("You cannot leave the cave yet!", (150, 150, 150))
+
+                    
+                    if action_taken:
+                        last_move_time = current_time
+                        # No longer tick cooldown on movement
+                                
+                        # Update FOV
+                        visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
+                        explored_tiles.update(visible_tiles)
+                        # Update minimap
+                        update_minimap()
 
         # Update Enemies independent of player input
         current_time = pygame.time.get_ticks()
@@ -929,8 +1052,16 @@ def main():
         # Update Camera
         camera.update(player)
         
+        # Update Particles
+        active_particles = []
+        for p in particles:
+            p.update()
+            if p.life > 0 and p.size > 0:
+                active_particles.append(p)
+        particles = active_particles
+        
         # Drawing
-        render_view(screen, camera, grid, visible_tiles, explored_tiles, enemies + [player])
+        render_view(screen, camera, grid, visible_tiles, explored_tiles, enemies + [player], game_state, cursor_x, cursor_y, particles)
         
         # Draw UI
         pygame.draw.rect(screen, (10, 10, 10), (0, SCREEN_HEIGHT - 150, SCREEN_WIDTH, 150)) # Sidebar BG
@@ -954,7 +1085,22 @@ def main():
         pot_text = font.render(f"Potions: {player.potions} (Press '1')", True, POTION_COLOR)
         screen.blit(pot_text, (10, SCREEN_HEIGHT - 85))
 
+        # Fireball
+        current_time = pygame.time.get_ticks()
+        time_since_cast = current_time - player.fireball_last_cast_time
+        if time_since_cast >= FIREBALL_COOLDOWN_MS:
+             fb_status = "READY (F)"
+             fb_color = FIREBALL_COLOR
+        else:
+             rem = (FIREBALL_COOLDOWN_MS - time_since_cast) // 1000
+             fb_status = f"WAIT ({int(rem)}s)"
+             fb_color = (100, 100, 100)
+             
+        fb_text = font.render(f"Fireball: {fb_status}", True, fb_color)
+        screen.blit(fb_text, (250, SCREEN_HEIGHT - 85))
+
         # Adjusted message log position for potion text
+
 
 
 

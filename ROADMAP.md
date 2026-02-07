@@ -37,5 +37,5 @@
 - [ ] **Equipment**: Weapons and Armor that modify stats.
 
 ## 8. Magic & Advanced Features
-- [ ] **Spells**: Fireball, Magic Missile (using the A* targeting potentially).
+- [x] **Spells**: Fireball (AoE) with cooldown and targeting cursor.
 - [ ] **Save/Load System**: Persistence using JSON or Pickle.
