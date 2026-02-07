@@ -4,7 +4,7 @@ import random
 import math
 
 # Constants
-SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
+SCREEN_WIDTH, SCREEN_HEIGHT = 800, 700 # Increased height for UI
 MAP_WIDTH, MAP_HEIGHT = 100, 80
 TILE_SIZE = 32 # Visual size of a tile in pixels
 FILL_PROB = 0.45
@@ -20,7 +20,16 @@ FLOOR_COLOR = (200, 200, 200)
 WALL_COLOR_DARK = (20, 20, 20)
 FLOOR_COLOR_DARK = (50, 50, 50)
 PLAYER_COLOR = (255, 0, 0) # Red player
+PLAYER_COLOR = (255, 0, 0) # Red player
 GOBLIN_COLOR = (0, 255, 0) # Green goblin
+STAIRS_DOWN_COLOR = (255, 255, 0) # Yellow
+STAIRS_UP_COLOR = (0, 100, 255) # Blue
+UI_BG_COLOR = (30, 30, 30)
+UI_HEIGHT = 150
+UI_BORDER_COLOR = (100, 100, 100)
+TEXT_COLOR = (240, 240, 240)
+HP_BAR_RED = (200, 0, 0)
+HP_BAR_GREEN = (0, 200, 0)
 
 # Gameplay Settings
 # Gameplay Settings
@@ -48,7 +57,8 @@ class Entity:
         """
         Attempt to move. 
         If blocked by wall -> Return False.
-        If blocked by entity -> Attack and Return True (action taken).
+        if blocked by entity -> Return Entity (collision).
+        if stairs -> Return "stairs".
         If free -> Move and Return True.
         """
         new_x = self.x + dx
@@ -62,32 +72,45 @@ class Entity:
         if grid[new_x, new_y] == 1:
             return False
             
+        if grid[new_x, new_y] == 1:
+            return False
+            
+        # Check Stairs
+        if grid[new_x, new_y] == 2:
+            return "stairs_down"
+        if grid[new_x, new_y] == 3:
+            return "stairs_up"
+            
         # 3. Check Entities (Collision/Combat)
         for entity in entities:
              if entity is not self and entity.x == new_x and entity.y == new_y:
-                 self.attack(entity)
-                 return True
+                 return entity # Return collision entity
         
         # 4. Move
         self.x = new_x
         self.y = new_y
-        return True
+        return True # Return True for successful move
 
-    def attack(self, target):
+    def attack(self, target, message_log):
         # D&D 5e Style Combat
         # Roll d20 + Str Mod vs AC
         roll = random.randint(1, 20)
         hit_roll = roll + self.strength
         
-        print(f"{self.name} attacks {target.name} (AC {target.ac}) with roll {roll}+{self.strength}={hit_roll}...", end=" ")
+        # Determine colors
+        attacker_color = (255, 100, 100) if self.name == "Goblin" else (100, 255, 100)
+        
+        log_msg = f"{self.name} attacks {target.name} (AC {target.ac})... Roll: {roll}+{self.strength}={hit_roll}."
         
         if hit_roll >= target.ac:
             # Hit!
             damage = max(1, random.randint(1, 6) + self.strength) # 1d6 + Str
             target.hp -= damage
-            print(f"HIT! for {damage} damage. ({target.hp}/{target.max_hp} HP left)")
+            message_log.add_message(log_msg + f" HIT for {damage} dmg!", (255, 255, 255))
+            if target.hp <= 0:
+                 message_log.add_message(f"{target.name} dies!", (200, 50, 50))
         else:
-            print("MISS!")
+            message_log.add_message(log_msg + " MISS!", (150, 150, 150))
 
     def draw(self, surface, tile_size, camera):
         # Calculate screen position
@@ -108,7 +131,7 @@ class Goblin(Entity):
     def __init__(self, x, y):
         super().__init__(x, y, GOBLIN_COLOR, "Goblin", hp=10, ac=12, strength=1)
 
-    def update(self, player, grid, visible_tiles, entities):
+    def update(self, player, grid, visible_tiles, entities, message_log):
         # Simple AI:
         # If player is visible to the goblin (in FOV), chase
         # Else wander randomly
@@ -131,9 +154,54 @@ class Goblin(Entity):
             dx, dy = direction
             
         if dx != 0 or dy != 0:
-            self.try_move(dx, dy, grid, entities)
+            result = self.try_move(dx, dy, grid, entities)
+            if isinstance(result, Entity): # Collision = Attack
+                self.attack(result, message_log)
+            # Else moved successfully or blocked by wall
 
 
+
+
+class MessageLog:
+    def __init__(self, x, y, width, height, font):
+        self.rect = pygame.Rect(x, y, width, height)
+        self.font = font
+        self.messages = [] # List of (text, color)
+        
+    def add_message(self, text, color=(255, 255, 255)):
+        self.messages.append((text, color))
+        if len(self.messages) > 10: # Keep last 10 messages
+            self.messages.pop(0)
+            
+    def draw(self, surface):
+        # Draw Background
+        pygame.draw.rect(surface, UI_BG_COLOR, self.rect)
+        pygame.draw.rect(surface, UI_BORDER_COLOR, self.rect, 2)
+        
+        # Draw Messages
+        line_height = 18
+        max_lines = (self.rect.height - 10) // line_height # -10 for padding
+        
+        # Slice to get only the messages that fit
+        visible_messages = self.messages[-max_lines:]
+        
+        y_offset = 5
+        for text, color in visible_messages:
+            msg_surf = self.font.render(text, True, color)
+            surface.blit(msg_surf, (self.rect.x + 10, self.rect.y + y_offset))
+            y_offset += line_height
+
+def draw_health_bar(surface, x, y, current, maximum):
+    bar_width = 200
+    bar_height = 20
+    fill = (current / maximum) * bar_width
+    outline_rect = pygame.Rect(x, y, bar_width, bar_height)
+    fill_rect = pygame.Rect(x, y, fill, bar_height)
+    
+    pygame.draw.rect(surface, (60, 60, 60), outline_rect)
+    pygame.draw.rect(surface, HP_BAR_GREEN, fill_rect)
+    pygame.draw.rect(surface, (255, 255, 255), outline_rect, 2)
+    
 
 class Camera:
     def __init__(self, width, height):
@@ -147,17 +215,15 @@ class Camera:
         # Center camera on target
         # Target position in pixels
         x = -target.x * TILE_SIZE + int(SCREEN_WIDTH / 2)
-        y = -target.y * TILE_SIZE + int(SCREEN_HEIGHT / 2)
+        y = -target.y * TILE_SIZE + int((SCREEN_HEIGHT - UI_HEIGHT) / 2) # Center in PLAY area (exclude UI)
         
         # Limit scrolling to map size
-        # min(0, x) -> prevent scrolling too far left (remember x is negative offset)
-        # Actually logic is: 
         # camera_x should be between -(MAP_WIDTH - SCREEN_WIDTH) and 0
         
         x = min(0, x) # Left side
         y = min(0, y) # Top side
         x = max(-(self.width - SCREEN_WIDTH), x) # Right side
-        y = max(-(self.height - SCREEN_HEIGHT), y) # Bottom side
+        y = max(-(self.height - (SCREEN_HEIGHT - UI_HEIGHT)), y) # Bottom side (Exclude UI)
         
         self.camera = pygame.Rect(x, y, self.width, self.height)
         self.x = x
@@ -169,10 +235,10 @@ class CaveGenerator:
         self.cols = cols
         self.rows = rows
         self.fill_prob = fill_prob
+        self.fill_prob = fill_prob
         self.grid = np.zeros((cols, rows), dtype=int)
-        self.reset()
         
-    def reset(self):
+    def generate(self, level_depth):
         """Initialize the grid with random noise and smooth it automatically."""
         # 1. Random noise
         self.grid = np.random.choice(
@@ -193,6 +259,25 @@ class CaveGenerator:
              
         # 4. Prune small disconnected regions to ensure playability
         self.prune_small_regions()
+
+        # 5. Place Stairs
+        # Down stairs (2) - Always present efficiently
+        down_x, down_y = self.get_random_floor_point()
+        self.grid[down_x, down_y] = 2 
+        
+        # Up stairs (3) - Present if level > 1
+        up_x, up_y = None, None
+        if level_depth > 1:
+            up_x, up_y = self.get_random_floor_point()
+            while up_x == down_x and up_y == down_y: # ensure distinct
+                 up_x, up_y = self.get_random_floor_point()
+            self.grid[up_x, up_y] = 3
+        else:
+             # Level 1 spawn point logic handled externally or just pick random floor
+             up_x, up_y = self.get_random_floor_point() # Just use as spawn
+             
+        return self.grid.copy(), (up_x, up_y), (down_x, down_y)
+
 
         
     def smooth(self):
@@ -317,6 +402,15 @@ def compute_fov(origin_x, origin_y, radius, grid):
 
 
 
+class LevelState:
+    def __init__(self, grid, explored_tiles, enemies, up_pos, down_pos):
+        self.grid = grid
+        self.explored_tiles = explored_tiles
+        self.enemies = enemies
+        self.up_pos = up_pos
+        self.down_pos = down_pos
+
+
 def draw_text_centered(surface, text, font, color, center_x, center_y):
     render = font.render(text, True, color)
     rect = render.get_rect(center= (center_x, center_y))
@@ -333,30 +427,42 @@ def main():
     
     game_state = STATE_START
     show_controls = False
-
+    dungeon_level = 1
 
     
     generator = CaveGenerator(MAP_WIDTH, MAP_HEIGHT, FILL_PROB)
     
-    # Spawn Player
-    start_x, start_y = generator.get_random_floor_point()
-    player = Player(start_x, start_y)
+    # Game State Persistence
+    levels = {} # depth -> LevelState
     
-    # Spawn Enemies
+    # Initialize Level 1
+    # Generate new
+    grid, spawn_pos, down_pos = generator.generate(1)
+    
+    player = Player(spawn_pos[0], spawn_pos[1])
+    
     enemies = []
-    for _ in range(10): # Spawn 10 goblins
+    start_x, start_y = spawn_pos
+    for _ in range(10): 
         ex, ey = generator.get_random_floor_point()
-        # Ensure not spawning on player
         while ex == start_x and ey == start_y:
             ex, ey = generator.get_random_floor_point()
         enemies.append(Goblin(ex, ey))
+        
+    visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
+    explored_tiles = set(visible_tiles)
     
-    # All entities list for easier checking
-    # Note: we need to maintain this dynamically as enemies die
+    # Save Level 1
+    levels[1] = LevelState(grid, explored_tiles, enemies, spawn_pos, down_pos)
 
     
     camera = Camera(MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT)
     
+    # UI Setup
+    ui_font = pygame.font.SysFont("consolas", 14)
+    message_log = MessageLog(10, SCREEN_HEIGHT - 110, SCREEN_WIDTH - 20, 100, ui_font)
+    message_log.add_message("Welcome to the Cave! Find the stairs to descend...", (255, 255, 0))
+
     clock = pygame.time.Clock()
     
     # Exploration tracking
@@ -387,7 +493,7 @@ def main():
         end_col = min(MAP_WIDTH, int((-camera.x + SCREEN_WIDTH) // TILE_SIZE) + 1)
         
         start_row = max(0, int(-camera.y // TILE_SIZE))
-        end_row = min(MAP_HEIGHT, int((-camera.y + SCREEN_HEIGHT) // TILE_SIZE) + 1)
+        end_row = min(MAP_HEIGHT, int((-camera.y + (SCREEN_HEIGHT - UI_HEIGHT)) // TILE_SIZE) + 1)
         
         screen.fill((0, 0, 0)) # Base black (unexplored)
         
@@ -398,12 +504,22 @@ def main():
                 if (x, y) in visible:
                     # Draw Full Color
                     color = WALL_COLOR if grid[x, y] == 1 else FLOOR_COLOR
+                    if grid[x, y] == 2: # Stairs Down
+                        color = STAIRS_DOWN_COLOR
+                    elif grid[x, y] == 3: # Stairs Up
+                        color = STAIRS_UP_COLOR
+                        
                     rect = (x * TILE_SIZE + camera.x, y * TILE_SIZE + camera.y, TILE_SIZE, TILE_SIZE)
                     # Optimization: draw.rect is fast, but we could batch. This is fine for <500 tiles.
                     pygame.draw.rect(screen, color, rect)
                 elif (x, y) in explored:
                     # Draw Dark Color (Fog of War)
                     color = WALL_COLOR_DARK if grid[x, y] == 1 else FLOOR_COLOR_DARK
+                    if grid[x, y] == 2: # Stairs seen before
+                         color = (100, 100, 0)
+                    elif grid[x, y] == 3:
+                         color = (0, 50, 100)
+                         
                     rect = (x * TILE_SIZE + camera.x, y * TILE_SIZE + camera.y, TILE_SIZE, TILE_SIZE)
                     pygame.draw.rect(screen, color, rect)
         
@@ -418,7 +534,7 @@ def main():
         minimap_surface.fill((0,0,0))
         # Draw all explored tiles
         for (x, y) in explored_tiles:
-            color = WALL_COLOR if generator.grid[x, y] == 1 else FLOOR_COLOR
+            color = WALL_COLOR if levels[dungeon_level].grid[x, y] == 1 else FLOOR_COLOR
             # Simple pixel set
             # Rect size
             rect = (x * MM_SCALE_X, y * MM_SCALE_Y, max(1, MM_SCALE_X), max(1, MM_SCALE_Y))
@@ -446,21 +562,27 @@ def main():
                 elif game_state == STATE_GAME_OVER:
                     if event.key == pygame.K_SPACE:
                         # Restart Game
-                        # Re-run setup logic
-                        generator.reset()
-                        start_x, start_y = generator.get_random_floor_point()
-                        player.x, player.y = start_x, start_y
+                        # Reset everything
+                        dungeon_level = 1
+                        levels.clear()
+                        
+                        grid, spawn_pos, down_pos = generator.generate(1)
+                        player.x, player.y = spawn_pos
                         player.hp = player.max_hp
                         
                         enemies = []
+                        start_x, start_y = spawn_pos
                         for _ in range(10): 
                             ex, ey = generator.get_random_floor_point()
                             while ex == start_x and ey == start_y:
                                 ex, ey = generator.get_random_floor_point()
                             enemies.append(Goblin(ex, ey))
                             
-                        visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, generator.grid)
+                        visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
                         explored_tiles = set(visible_tiles)
+                        
+                        levels[1] = LevelState(grid, explored_tiles, enemies, spawn_pos, down_pos)
+                        
                         update_minimap()
                         
                         game_state = STATE_PLAYING
@@ -525,10 +647,91 @@ def main():
                 # Pass all entities (enemies + player) to check collision
                 all_entities = enemies + [player]
                 
-                if player.try_move(dx, dy, generator.grid, all_entities):
+                result = player.try_move(dx, dy, levels[dungeon_level].grid, all_entities)
+                
+                action_taken = False
+                if result is True: # Moved
+                    action_taken = True
+                elif isinstance(result, Entity): # Attacked
+                    player.attack(result, message_log)
+                    action_taken = True
+                
+                elif result == "stairs_down":
+                    # Save current level state
+                    levels[dungeon_level].explored_tiles = explored_tiles.copy()
+                    
+                    dungeon_level += 1
+                    message_log.add_message(f"You descend to level {dungeon_level}...", (255, 255, 0))
+                    
+                    if dungeon_level in levels:
+                        # Load existing level
+                        lvl = levels[dungeon_level]
+                        grid = lvl.grid
+                        explored_tiles = lvl.explored_tiles
+                        enemies = lvl.enemies
+                        player.x, player.y = lvl.up_pos # Spawn at Up stairs
+                    else:
+                        # Generate New Level
+                        grid, up_pos, down_pos = generator.generate(dungeon_level)
+                        
+                        # Generate Enemies
+                        enemies = []
+                        num_enemies = 10 + (dungeon_level * 2)
+                        for _ in range(num_enemies): 
+                            ex, ey = generator.get_random_floor_point()
+                            # Avoid stairs
+                            while (ex, ey) == up_pos or (ex, ey) == down_pos:
+                                ex, ey = generator.get_random_floor_point()
+                                
+                            hp = 10 + dungeon_level
+                            strength = 1 + (dungeon_level // 3)
+                            goblin = Goblin(ex, ey)
+                            goblin.hp = hp
+                            goblin.max_hp = hp
+                            goblin.strength = strength
+                            enemies.append(goblin)
+                            
+                        # Init visited
+                        explored_tiles = set()
+                        
+                        # Save
+                        levels[dungeon_level] = LevelState(grid, explored_tiles, enemies, up_pos, down_pos)
+                        player.x, player.y = up_pos
+
+                    # Common transition updates
+                    visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
+                    explored_tiles.update(visible_tiles)
+                    update_minimap()
+                    action_taken = False 
+
+                elif result == "stairs_up":
+                    if dungeon_level > 1:
+                        # Save current state
+                        levels[dungeon_level].explored_tiles = explored_tiles.copy()
+                        
+                        dungeon_level -= 1
+                        message_log.add_message(f"You ascend to level {dungeon_level}...", (0, 100, 255))
+                        
+                        # Load previous level
+                        lvl = levels[dungeon_level]
+                        grid = lvl.grid
+                        explored_tiles = lvl.explored_tiles
+                        enemies = lvl.enemies
+                        player.x, player.y = lvl.down_pos # Spawn at Down stairs
+                        
+                         # Common transition updates
+                        visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
+                        explored_tiles.update(visible_tiles)
+                        update_minimap()
+                        action_taken = False
+                    else:
+                        message_log.add_message("You cannot leave the cave yet!", (150, 150, 150))
+
+                
+                if action_taken:
                     last_move_time = current_time
                     # Update FOV
-                    visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, generator.grid)
+                    visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
                     explored_tiles.update(visible_tiles)
                     # Update minimap
                     update_minimap()
@@ -536,24 +739,34 @@ def main():
         # Update Enemies independent of player input
         current_time = pygame.time.get_ticks()
         if current_time - last_enemy_move_time > ENEMY_MOVE_DELAY:
-            # Clean up dead enemies
+            # Clean up dead enemies (on current level)
             active_enemies = [e for e in enemies if e.hp > 0]
-            enemies = active_enemies
+            enemies = active_enemies # Update local ref
+            levels[dungeon_level].enemies = active_enemies # Update persistent ref
             
             all_entities = enemies + [player]
             
             for enemy in enemies:
-                enemy.update(player, generator.grid, visible_tiles, all_entities)
+                enemy.update(player, grid, visible_tiles, all_entities, message_log)
             last_enemy_move_time = current_time
 
         # Update Camera
         camera.update(player)
         
         # Drawing
-        render_view(screen, camera, generator.grid, visible_tiles, explored_tiles, enemies + [player])
+        render_view(screen, camera, grid, visible_tiles, explored_tiles, enemies + [player])
+        
+        # Draw UI
+        pygame.draw.rect(screen, (10, 10, 10), (0, SCREEN_HEIGHT - 150, SCREEN_WIDTH, 150)) # Sidebar BG
+        message_log.draw(screen)
+        
+        # Health Bar
+        draw_health_bar(screen, 10, SCREEN_HEIGHT - 140, player.hp, player.max_hp)
+        hp_text = font.render(f"HP: {player.hp}/{player.max_hp} | Lvl: {dungeon_level}", True, (255, 255, 255))
+        screen.blit(hp_text, (220, SCREEN_HEIGHT - 140))
+
 
         
-        # Draw Minimap
         if show_minimap:
             # Draw border
             border_rect = (SCREEN_WIDTH - MINIMAP_SIZE[0] - 10, 10, MINIMAP_SIZE[0] + 2, MINIMAP_SIZE[1] + 2)
@@ -568,26 +781,6 @@ def main():
             my = int(player.y / MAP_HEIGHT * MINIMAP_SIZE[1])
             pygame.draw.rect(screen, PLAYER_COLOR, (minimap_pos[0] + mx, minimap_pos[1] + my, 3, 3))
             
-        if show_minimap:
-            # Draw border
-            border_rect = (SCREEN_WIDTH - MINIMAP_SIZE[0] - 10, 10, MINIMAP_SIZE[0] + 2, MINIMAP_SIZE[1] + 2)
-            pygame.draw.rect(screen, (255, 255, 255), border_rect, 1)
-            
-            # Blit minimap
-            minimap_pos = (SCREEN_WIDTH - MINIMAP_SIZE[0] - 9, 11)
-            screen.blit(minimap_surface, minimap_pos)
-            
-            # Draw player on minimap
-            mx = int(player.x / MAP_WIDTH * MINIMAP_SIZE[0])
-            my = int(player.y / MAP_HEIGHT * MINIMAP_SIZE[1])
-            pygame.draw.rect(screen, PLAYER_COLOR, (minimap_pos[0] + mx, minimap_pos[1] + my, 3, 3))
-            
-        # Draw UI Legend (Always separate)
-        legend_text = font.render(f"HP: {player.hp}/{player.max_hp} | Controls: H", True, (255, 255, 255))
-        pygame.draw.rect(screen, (0, 0, 0), (5, 5, legend_text.get_width() + 10, legend_text.get_height() + 10))
-        pygame.draw.rect(screen, (255, 255, 255), (5, 5, legend_text.get_width() + 10, legend_text.get_height() + 10), 1)
-        screen.blit(legend_text, (10, 10))
-        
         # Draw Controls Popup
         if show_controls:
             popup_lines = [
@@ -610,11 +803,6 @@ def main():
             for i, line in enumerate(popup_lines):
                  line_surf = font.render(line, True, (255, 255, 255))
                  screen.blit(line_surf, (popup_x + 10, popup_y + 10 + i * 25))
-
-        # Add a small shadow/outline for visibility
-        pygame.draw.rect(screen, (0, 0, 0), (5, 5, legend_text.get_width() + 10, legend_text.get_height() + 10))
-        pygame.draw.rect(screen, (255, 255, 255), (5, 5, legend_text.get_width() + 10, legend_text.get_height() + 10), 1)
-        screen.blit(legend_text, (10, 10))
         
         pygame.display.flip()
             

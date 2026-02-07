@@ -15,10 +15,10 @@
 - [x] **Basic Enemy AI**: Enemies move randomly or towards the player if visible.
 
 ## 4. Combat System (D&D Inspired)
-- [ ] **Stats**: Add HP, Armor Class (AC), Strength to entities.
-- [ ] **Melee Attacks**: Bumping into an enemy triggers an attack instead of movement.
-- [ ] **Combat Resolution**: Roll dice (d20) vs AC to hit, roll damage.
-- [ ] **Death**: Enemies vanish when HP <= 0. Game Over screen if Player dies.
+- [x] **Stats**: Add HP, Armor Class (AC), Strength to entities.
+- [x] **Melee Attacks**: Bumping into an enemy triggers an attack instead of movement.
+- [x] **Combat Resolution**: Roll dice (d20) vs AC to hit, roll damage.
+- [x] **Death**: Enemies vanish when HP <= 0. Game Over screen if Player dies.
 
 ## 5. User Interface (UI)
 - [ ] **Message Log**: A scrolling text box at the bottom showing combat info ("You hit the Goblin for 4 damage!").
