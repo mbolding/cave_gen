@@ -24,12 +24,14 @@ PLAYER_COLOR = (255, 0, 0) # Red player
 GOBLIN_COLOR = (0, 255, 0) # Green goblin
 STAIRS_DOWN_COLOR = (255, 255, 0) # Yellow
 STAIRS_UP_COLOR = (0, 100, 255) # Blue
+POTION_COLOR = (255, 50, 200) # Pink/Reddish Potion
 UI_BG_COLOR = (30, 30, 30)
 UI_HEIGHT = 150
 UI_BORDER_COLOR = (100, 100, 100)
 TEXT_COLOR = (240, 240, 240)
 HP_BAR_RED = (200, 0, 0)
 HP_BAR_GREEN = (0, 200, 0)
+POTION_HEAL_AMOUNT = 15
 
 # Gameplay Settings
 # Gameplay Settings
@@ -43,7 +45,7 @@ STATE_GAME_OVER = 2
 
 
 class Entity:
-    def __init__(self, x, y, color, name="Entity", hp=10, ac=10, strength=0):
+    def __init__(self, x, y, color, name="Entity", hp=10, ac=10, strength=0, xp_reward=0):
         self.x = x
         self.y = y
         self.color = color
@@ -52,6 +54,32 @@ class Entity:
         self.max_hp = hp
         self.ac = ac
         self.strength = strength
+        self.xp_reward = xp_reward
+        
+        # Leveling (Mainly for Player)
+        self.xp = 0
+        self.level = 1
+        self.xp_to_next_level = 100
+        
+    def gain_xp(self, amount, message_log):
+        self.xp += amount
+        message_log.add_message(f"You gain {amount} XP.", (255, 255, 0))
+        
+        if self.xp >= self.xp_to_next_level:
+            self.level_up(message_log)
+            
+    def level_up(self, message_log):
+        self.level += 1
+        self.xp -= self.xp_to_next_level
+        self.xp_to_next_level = int(self.xp_to_next_level * 1.5)
+        
+        # Stat Increases
+        self.max_hp += 10
+        self.hp = self.max_hp # Full heal on level up
+        self.strength += 1
+        
+        message_log.add_message(f"LEVEL UP! You are now level {self.level}!", (0, 255, 0))
+        message_log.add_message(f"Max HP +10, Str +1", (0, 255, 0))
         
     def try_move(self, dx, dy, grid, entities):
         """
@@ -81,6 +109,10 @@ class Entity:
         if grid[new_x, new_y] == 3:
             return "stairs_up"
             
+        # Check Potions
+        if grid[new_x, new_y] == 4:
+            return "potion"
+            
         # 3. Check Entities (Collision/Combat)
         for entity in entities:
              if entity is not self and entity.x == new_x and entity.y == new_y:
@@ -105,10 +137,18 @@ class Entity:
         if hit_roll >= target.ac:
             # Hit!
             damage = max(1, random.randint(1, 6) + self.strength) # 1d6 + Str
-            target.hp -= damage
-            message_log.add_message(log_msg + f" HIT for {damage} dmg!", (255, 255, 255))
-            if target.hp <= 0:
-                 message_log.add_message(f"{target.name} dies!", (200, 50, 50))
+            
+            if target.hp > 0: # Only damage if alive
+                target.hp -= damage
+                message_log.add_message(log_msg + f" HIT for {damage} dmg!", (255, 255, 255))
+                
+                if target.hp <= 0:
+                     message_log.add_message(f"{target.name} dies!", (200, 50, 50))
+                     if target.xp_reward > 0 and self.name == "Player":
+                         self.gain_xp(target.xp_reward, message_log)
+                         target.xp_reward = 0 # Prevent double dipping
+            else:
+                 message_log.add_message(f"{self.name} hits the corpse of {target.name}.", (100, 100, 100))
         else:
             message_log.add_message(log_msg + " MISS!", (150, 150, 150))
 
@@ -125,11 +165,24 @@ class Entity:
 
 class Player(Entity):
     def __init__(self, x, y):
-        super().__init__(x, y, PLAYER_COLOR, "Player", hp=30, ac=14, strength=3)
+        super().__init__(x, y, PLAYER_COLOR, "Player", hp=30, ac=14, strength=2)
+        self.xp_to_next_level = 100
+        self.potions = 0 # Inventory
+        
+    def heal(self, amount, message_log):
+        if self.hp == self.max_hp:
+            message_log.add_message("You are already at full health.", (200, 200, 0))
+            return False
+            
+        heal_val = min(amount, self.max_hp - self.hp)
+        self.hp += heal_val
+        message_log.add_message(f"You heal for {heal_val} HP.", (0, 255, 100))
+        return True
+
 
 class Goblin(Entity):
     def __init__(self, x, y):
-        super().__init__(x, y, GOBLIN_COLOR, "Goblin", hp=10, ac=12, strength=1)
+        super().__init__(x, y, GOBLIN_COLOR, "Goblin", hp=10, ac=12, strength=1, xp_reward=20)
 
     def update(self, player, grid, visible_tiles, entities, message_log):
         # Simple AI:
@@ -276,6 +329,14 @@ class CaveGenerator:
              # Level 1 spawn point logic handled externally or just pick random floor
              up_x, up_y = self.get_random_floor_point() # Just use as spawn
              
+        # 6. Scatter Potions
+        num_potions = random.randint(3, 8)
+        for _ in range(num_potions):
+            px, py = self.get_random_floor_point()
+            # Avoid overwriting stairs
+            if self.grid[px, py] == 0:
+                self.grid[px, py] = 4 # 4 = Potion
+
         return self.grid.copy(), (up_x, up_y), (down_x, down_y)
 
 
@@ -440,6 +501,7 @@ def main():
     grid, spawn_pos, down_pos = generator.generate(1)
     
     player = Player(spawn_pos[0], spawn_pos[1])
+    player.name = "Player" # Ensure name is set for checks
     
     enemies = []
     start_x, start_y = spawn_pos
@@ -460,7 +522,7 @@ def main():
     
     # UI Setup
     ui_font = pygame.font.SysFont("consolas", 14)
-    message_log = MessageLog(10, SCREEN_HEIGHT - 110, SCREEN_WIDTH - 20, 100, ui_font)
+    message_log = MessageLog(10, SCREEN_HEIGHT - 60, SCREEN_WIDTH - 20, 55, ui_font) # Moved down MORE
     message_log.add_message("Welcome to the Cave! Find the stairs to descend...", (255, 255, 0))
 
     clock = pygame.time.Clock()
@@ -508,6 +570,8 @@ def main():
                         color = STAIRS_DOWN_COLOR
                     elif grid[x, y] == 3: # Stairs Up
                         color = STAIRS_UP_COLOR
+                    elif grid[x, y] == 4: # Potion
+                        color = POTION_COLOR
                         
                     rect = (x * TILE_SIZE + camera.x, y * TILE_SIZE + camera.y, TILE_SIZE, TILE_SIZE)
                     # Optimization: draw.rect is fast, but we could batch. This is fine for <500 tiles.
@@ -519,6 +583,8 @@ def main():
                          color = (100, 100, 0)
                     elif grid[x, y] == 3:
                          color = (0, 50, 100)
+                    elif grid[x, y] == 4: # Potion seen
+                         color = (100, 20, 80)
                          
                     rect = (x * TILE_SIZE + camera.x, y * TILE_SIZE + camera.y, TILE_SIZE, TILE_SIZE)
                     pygame.draw.rect(screen, color, rect)
@@ -592,15 +658,25 @@ def main():
                         show_minimap = not show_minimap
                     elif event.key == pygame.K_h:
                         show_controls = not show_controls
+                    elif event.key == pygame.K_1:
+                        # Use Potion
+                        if player.potions > 0:
+                            if player.heal(POTION_HEAL_AMOUNT, message_log):
+                                player.potions -= 1
+                                message_log.add_message(f"Glug glug... ({player.potions} left)", (0, 255, 100))
+                        else:
+                            message_log.add_message("You have no potions!", (150, 150, 150))
 
         
         if game_state == STATE_START:
             screen.fill((0, 0, 0))
             draw_text_centered(screen, "CAVE EXPLORER", title_font, (255, 255, 255), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3)
             
+            
             controls = [
                 "Controls:",
                 "Arrow Keys: Move & Attack",
+                "1: Drink Health Potion",
                 "M: Toggle Minimap",
                 "H: Toggle Controls Popup",
                 "",
@@ -654,6 +730,19 @@ def main():
                     action_taken = True
                 elif isinstance(result, Entity): # Attacked
                     player.attack(result, message_log)
+                    action_taken = True
+                
+                elif result == "potion":
+                    # Auto-pickup
+                    player.potions += 1
+                    # Remove from grid
+                    grid[player.x + dx, player.y + dy] = 0
+                    
+                    # Move player
+                    player.x += dx
+                    player.y += dy
+                    
+                    message_log.add_message("You pick up a Health Potion.", (255, 100, 255))
                     action_taken = True
                 
                 elif result == "stairs_down":
@@ -762,8 +851,21 @@ def main():
         
         # Health Bar
         draw_health_bar(screen, 10, SCREEN_HEIGHT - 140, player.hp, player.max_hp)
-        hp_text = font.render(f"HP: {player.hp}/{player.max_hp} | Lvl: {dungeon_level}", True, (255, 255, 255))
+        
+        # Stats & Level
+        hp_text = font.render(f"HP: {player.hp}/{player.max_hp}", True, (255, 255, 255))
         screen.blit(hp_text, (220, SCREEN_HEIGHT - 140))
+        
+        level_text = font.render(f"Lvl: {player.level} (XP: {player.xp}/{player.xp_to_next_level}) | Depth: {dungeon_level}", True, (200, 200, 255))
+        screen.blit(level_text, (10, SCREEN_HEIGHT - 110))
+
+        # Potions
+        pot_text = font.render(f"Potions: {player.potions} (Press '1')", True, POTION_COLOR)
+        screen.blit(pot_text, (10, SCREEN_HEIGHT - 85))
+
+        # Adjusted message log position for potion text
+
+
 
 
         
@@ -786,6 +888,7 @@ def main():
             popup_lines = [
                 "Controls:",
                 "Arrows: Move/Attack",
+                "1: Use Potion",
                 "M: Minimap",
                 "H: Toggle this menu"
             ]

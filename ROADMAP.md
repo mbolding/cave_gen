@@ -21,16 +21,19 @@
 - [x] **Death**: Enemies vanish when HP <= 0. Game Over screen if Player dies.
 
 ## 5. User Interface (UI)
-- [ ] **Message Log**: A scrolling text box at the bottom showing combat info ("You hit the Goblin for 4 damage!").
-- [ ] **Status Bar**: Health bar, current level, stats display.
+- [x] **Message Log**: A scrolling text box at the bottom showing combat info ("You hit the Goblin for 4 damage!").
+- [x] **Status Bar**: Health bar, current level, stats display.
+- [x] **Minimap**: Toggleable radar showing the full cave layout.
+- [ ] **stairs**: show stairs on minimap after they are seen.
 
 ## 6. Progression
-- [ ] **Stairs & Depth**: Add a staircase tile. Moving to it generates a new cave map (Deeper Level).
-- [ ] **XP & Leveling**: Killing enemies gives XP. Level up increases stats.
+- [x] **Stairs & Depth**: Add a staircase tile. Moving to it generates a new cave map (Deeper Level).
+- [x] **Persistent Levels**: You can climb back up to previous floors, and they remain exactly as you left them.
+- [x] **XP & Leveling**: Killing enemies gives XP. Level up increases stats.
 
 ## 7. Items & Inventory
-- [ ] **Items**: Potions (Heal), Scrolls.
-- [ ] **Inventory System**: UI to list carried items and Use/Drop them.
+- [x] **Items**: Potions (Heal).
+- [x] **Inventory System**: Simple counter and hotkey ('1') for potions.
 - [ ] **Equipment**: Weapons and Armor that modify stats.
 
 ## 8. Magic & Advanced Features
