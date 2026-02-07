@@ -24,7 +24,7 @@
 - [x] **Message Log**: A scrolling text box at the bottom showing combat info ("You hit the Goblin for 4 damage!").
 - [x] **Status Bar**: Health bar, current level, stats display.
 - [x] **Minimap**: Toggleable radar showing the full cave layout.
-- [ ] **stairs**: show stairs on minimap after they are seen.
+- [x] **stairs**: show stairs on minimap after they are seen.
 
 ## 6. Progression
 - [x] **Stairs & Depth**: Add a staircase tile. Moving to it generates a new cave map (Deeper Level).
@@ -34,8 +34,8 @@
 ## 7. Items & Inventory
 - [x] **Items**: Potions (Heal).
 - [x] **Inventory System**: Simple counter and hotkey ('1') for potions.
-- [ ] **Equipment**: Weapons and Armor that modify stats.
+- [x] **Equipment**: Weapons and Armor that modify stats.
 
 ## 8. Magic & Advanced Features
 - [x] **Spells**: Fireball (AoE) with cooldown and targeting cursor.
-- [ ] **Save/Load System**: Persistence using JSON or Pickle.
+- [x] **Save/Load System**: Persistence using JSON or Pickle.

@@ -2,6 +2,8 @@ import pygame
 import numpy as np
 import random
 import math
+import pickle
+import os
 
 # Constants
 SCREEN_WIDTH, SCREEN_HEIGHT = 800, 700 # Increased height for UI
@@ -557,6 +559,26 @@ def draw_text_centered(surface, text, font, color, center_x, center_y):
     rect = render.get_rect(center= (center_x, center_y))
     surface.blit(render, rect)
 
+SAVE_FILE = "savegame.pkl"
+
+def save_game(player, dungeon_level, levels, message_log):
+    data = {
+        "player": player,
+        "dungeon_level": dungeon_level,
+        "levels": levels,
+        "messages": message_log.messages
+    }
+    with open(SAVE_FILE, "wb") as f:
+        pickle.dump(data, f)
+    print("Game Saved.")
+
+def load_game():
+    if not os.path.exists(SAVE_FILE):
+        return None
+    with open(SAVE_FILE, "rb") as f:
+        data = pickle.load(f)
+    return data
+
 def main():
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -749,6 +771,29 @@ def main():
                     if event.key == pygame.K_SPACE:
                         game_state = STATE_PLAYING
                         show_controls = False # Auto hide on start
+                    elif event.key == pygame.K_c and os.path.exists(SAVE_FILE):
+                        # Load Game
+                        data = load_game()
+                        if data:
+                            player = data["player"]
+                            dungeon_level = data["dungeon_level"]
+                            levels = data["levels"]
+                            message_log.messages = data["messages"]
+                            
+                            # Restore current level items
+                            if dungeon_level in levels:
+                                grid = levels[dungeon_level].grid
+                                explored_tiles = levels[dungeon_level].explored_tiles
+                                enemies = levels[dungeon_level].enemies
+                            
+                            # Recompute FOV
+                            visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
+                            # Update minimap
+                            update_minimap()
+                            
+                            game_state = STATE_PLAYING
+                            message_log.add_message("Game Loaded.", (100, 255, 100))
+                            show_controls = False
                 
                 elif game_state == STATE_GAME_OVER:
                     if event.key == pygame.K_SPACE:
@@ -801,6 +846,11 @@ def main():
                         else:
                             remaining = (FIREBALL_COOLDOWN_MS - (current_time - player.fireball_last_cast_time)) // 1000
                             message_log.add_message(f"Fireball is on cooldown! ({remaining}s)", (150, 150, 150))
+                            
+                    elif event.key == pygame.K_s:
+                        # Manual Save
+                        save_game(player, dungeon_level, levels, message_log)
+                        message_log.add_message("Game Saved.", (100, 255, 100))
                             
                 elif game_state == STATE_TARGETING:
                     if event.key == pygame.K_ESCAPE:
@@ -867,15 +917,25 @@ def main():
                 "1: Drink Health Potion",
                 "F: Cast Fireball (AoE)",
                 "M: Toggle Minimap",
+                "S: Save Game",
                 "H: Toggle Controls Popup",
                 "",
                 "Press SPACE to Start"
             ]
             
+            if os.path.exists(SAVE_FILE):
+                controls.append("Press C to Continue")
+            
             for i, line in enumerate(controls):
                 draw_text_centered(screen, line, font, (200, 200, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + i * 30)
                 
             pygame.display.flip()
+            
+            # Input handling for Menu (since we are using continue)
+            # We need to peek events here or restructuring.
+            # actually we are in the main loop, so we handled events above.
+            # But the event loop above only checked specific keys for STATE_PLAYING.
+            # We need to add logic to the Event Loop for STATE_START to check for C.
             continue
             
         elif game_state == STATE_GAME_OVER:
@@ -999,6 +1059,10 @@ def main():
                         visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
                         explored_tiles.update(visible_tiles)
                         update_minimap()
+                        
+                        # Auto-Save
+                        save_game(player, dungeon_level, levels, message_log)
+                        
                         action_taken = False 
 
                     elif result == "stairs_up":
@@ -1020,6 +1084,10 @@ def main():
                             visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, grid)
                             explored_tiles.update(visible_tiles)
                             update_minimap()
+                            
+                            # Auto-Save
+                            save_game(player, dungeon_level, levels, message_log)
+                            
                             action_taken = False
                         else:
                             message_log.add_message("You cannot leave the cave yet!", (150, 150, 150))
