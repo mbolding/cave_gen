@@ -39,3 +39,11 @@
 ## 8. Magic & Advanced Features
 - [x] **Spells**: Fireball (AoE) with cooldown and targeting cursor.
 - [x] **Save/Load System**: Persistence using JSON or Pickle.
+
+## Version 0.2 (Next Session)
+- [ ] **Audio System**: Add sound effects (steps, hits, magic) and background music.
+- [ ] **Graphics Overhaul**: Replace colored rectangles with sprite images (Player, Goblins, Walls).
+- [ ] **Inventory UI**: Create a visual inventory screen (press 'I') to view stats and equip items.
+- [ ] **Advanced Enemies**: Add Archer Goblins (ranged attack) and Orc Brutes (high HP, slow).
+- [ ] **Boss Encounter**: Design a unique Boss enemy at Level 5 or 10.
+- [ ] **More Spells**: Implement 'Magic Missile' (homing) and 'Teleport'.
