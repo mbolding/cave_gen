@@ -1,7 +1,7 @@
 # Roguelike Dungeon Explorer Roadmap
 
 ## 1. Core Movement & Entities 
-- [ ] **Player Entity**: Create a generic `Entity` class and a `Player` subclass.
+- [x] **Player Entity**: Create a generic `Entity` class and a `Player` subclass.
 - [x] **Movement Logic**: Allow the player to move with arrow keys/WASD, colliding with walls (checking the `grid`).
 - [x] **Camera/Scrolling**: If the map is larger than the screen (it is), implemented a camera system to follow the player.
 
@@ -10,9 +10,9 @@
 - [x] **Explored Memory**: Remember visited areas (drawn in grey) vs currently visible areas (drawn in full color).
 
 ## 3. Turn-Based System & NPCs
-- [ ] **NPC/Enemy Entities**: Spawn basic enemies (e.g., Goblins) in random open floor spots.
-- [ ] **Turn-Based Loop**: Game waits for player input. Player Move -> Enemies Move.
-- [ ] **Basic Enemy AI**: Enemies move randomly or towards the player if visible.
+- [x] **NPC/Enemy Entities**: Spawn basic enemies (e.g., Goblins) in random open floor spots.
+- [x] **Turn-Based Loop**: Game waits for player input. Player Move -> Enemies Move. (Modified to independent real-time loops per request).
+- [x] **Basic Enemy AI**: Enemies move randomly or towards the player if visible.
 
 ## 4. Combat System (D&D Inspired)
 - [ ] **Stats**: Add HP, Armor Class (AC), Strength to entities.

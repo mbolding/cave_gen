@@ -20,31 +20,74 @@ FLOOR_COLOR = (200, 200, 200)
 WALL_COLOR_DARK = (20, 20, 20)
 FLOOR_COLOR_DARK = (50, 50, 50)
 PLAYER_COLOR = (255, 0, 0) # Red player
-
+GOBLIN_COLOR = (0, 255, 0) # Green goblin
 
 # Gameplay Settings
-MOVE_DELAY = 50 # Milliseconds between moves
+# Gameplay Settings
+MOVE_DELAY = 150 # Player move cooldown
+ENEMY_MOVE_DELAY = 500 # Enemy move speed (slower than player)
+
+# Game States
+STATE_START = 0
+STATE_PLAYING = 1
+STATE_GAME_OVER = 2
 
 
 class Entity:
-    def __init__(self, x, y, color):
+    def __init__(self, x, y, color, name="Entity", hp=10, ac=10, strength=0):
         self.x = x
         self.y = y
         self.color = color
+        self.name = name
+        self.hp = hp
+        self.max_hp = hp
+        self.ac = ac
+        self.strength = strength
         
-    def move(self, dx, dy, grid):
-        """Move the entity if the target position is not a wall."""
+    def try_move(self, dx, dy, grid, entities):
+        """
+        Attempt to move. 
+        If blocked by wall -> Return False.
+        If blocked by entity -> Attack and Return True (action taken).
+        If free -> Move and Return True.
+        """
         new_x = self.x + dx
         new_y = self.y + dy
         
-        # Check boundaries
-        if 0 <= new_x < grid.shape[0] and 0 <= new_y < grid.shape[1]:
-            # Check collision (0 is floor, 1 is wall)
-            if grid[new_x, new_y] == 0:
-                self.x = new_x
-                self.y = new_y
-                return True
-        return False
+        # 1. Check Map Boundaries
+        if not (0 <= new_x < grid.shape[0] and 0 <= new_y < grid.shape[1]):
+            return False
+            
+        # 2. Check Walls
+        if grid[new_x, new_y] == 1:
+            return False
+            
+        # 3. Check Entities (Collision/Combat)
+        for entity in entities:
+             if entity is not self and entity.x == new_x and entity.y == new_y:
+                 self.attack(entity)
+                 return True
+        
+        # 4. Move
+        self.x = new_x
+        self.y = new_y
+        return True
+
+    def attack(self, target):
+        # D&D 5e Style Combat
+        # Roll d20 + Str Mod vs AC
+        roll = random.randint(1, 20)
+        hit_roll = roll + self.strength
+        
+        print(f"{self.name} attacks {target.name} (AC {target.ac}) with roll {roll}+{self.strength}={hit_roll}...", end=" ")
+        
+        if hit_roll >= target.ac:
+            # Hit!
+            damage = max(1, random.randint(1, 6) + self.strength) # 1d6 + Str
+            target.hp -= damage
+            print(f"HIT! for {damage} damage. ({target.hp}/{target.max_hp} HP left)")
+        else:
+            print("MISS!")
 
     def draw(self, surface, tile_size, camera):
         # Calculate screen position
@@ -55,6 +98,41 @@ class Entity:
         if -tile_size <= screen_x < SCREEN_WIDTH and -tile_size <= screen_y < SCREEN_HEIGHT:
             rect = (screen_x, screen_y, tile_size, tile_size)
             pygame.draw.rect(surface, self.color, rect)
+
+
+class Player(Entity):
+    def __init__(self, x, y):
+        super().__init__(x, y, PLAYER_COLOR, "Player", hp=30, ac=14, strength=3)
+
+class Goblin(Entity):
+    def __init__(self, x, y):
+        super().__init__(x, y, GOBLIN_COLOR, "Goblin", hp=10, ac=12, strength=1)
+
+    def update(self, player, grid, visible_tiles, entities):
+        # Simple AI:
+        # If player is visible to the goblin (in FOV), chase
+        # Else wander randomly
+        
+        dx, dy = 0, 0
+        
+        # Check if dead
+        if self.hp <= 0: return
+
+        if (self.x, self.y) in visible_tiles:
+            # Chase player
+            if self.x < player.x: dx = 1
+            elif self.x > player.x: dx = -1
+            
+            if self.y < player.y: dy = 1
+            elif self.y > player.y: dy = -1
+        else:
+            # Wander randomly
+            direction = random.choice([(0,1), (0,-1), (1,0), (-1,0), (0,0)])
+            dx, dy = direction
+            
+        if dx != 0 or dy != 0:
+            self.try_move(dx, dy, grid, entities)
+
 
 
 class Camera:
@@ -238,20 +316,44 @@ def compute_fov(origin_x, origin_y, radius, grid):
 
 
 
+
+def draw_text_centered(surface, text, font, color, center_x, center_y):
+    render = font.render(text, True, color)
+    rect = render.get_rect(center= (center_x, center_y))
+    surface.blit(render, rect)
+
 def main():
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Cave Explorer")
     
-    # UI Font
+    # UI Fonts
     font = pygame.font.SysFont(None, 24)
+    title_font = pygame.font.SysFont(None, 64)
+    
+    game_state = STATE_START
+    show_controls = False
+
 
     
     generator = CaveGenerator(MAP_WIDTH, MAP_HEIGHT, FILL_PROB)
     
     # Spawn Player
     start_x, start_y = generator.get_random_floor_point()
-    player = Entity(start_x, start_y, PLAYER_COLOR)
+    player = Player(start_x, start_y)
+    
+    # Spawn Enemies
+    enemies = []
+    for _ in range(10): # Spawn 10 goblins
+        ex, ey = generator.get_random_floor_point()
+        # Ensure not spawning on player
+        while ex == start_x and ey == start_y:
+            ex, ey = generator.get_random_floor_point()
+        enemies.append(Goblin(ex, ey))
+    
+    # All entities list for easier checking
+    # Note: we need to maintain this dynamically as enemies die
+
     
     camera = Camera(MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT)
     
@@ -275,8 +377,9 @@ def main():
 
     
     last_move_time = 0
+    last_enemy_move_time = 0
     
-    def render_view(screen, camera, grid, visible, explored):
+    def render_view(screen, camera, grid, visible, explored, entities):
         # Determine accessible range based on camera
         # Camera X is negative offset. 
         # Screen x=0 corresponds to Map x= -camera.x
@@ -303,6 +406,13 @@ def main():
                     color = WALL_COLOR_DARK if grid[x, y] == 1 else FLOOR_COLOR_DARK
                     rect = (x * TILE_SIZE + camera.x, y * TILE_SIZE + camera.y, TILE_SIZE, TILE_SIZE)
                     pygame.draw.rect(screen, color, rect)
+        
+        # Draw visible entities
+        for entity in entities:
+             # Basic visibility check: is entity on a visible tile?
+             if (entity.x, entity.y) in visible:
+                 entity.draw(screen, TILE_SIZE, camera)
+
                     
     def update_minimap():
         minimap_surface.fill((0,0,0))
@@ -320,7 +430,6 @@ def main():
     running = True
     
     while running:
-
         clock.tick(60)
         
         # Event Handling
@@ -329,9 +438,74 @@ def main():
                 running = False
             
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_m:
-                    show_minimap = not show_minimap
+                if game_state == STATE_START:
+                    if event.key == pygame.K_SPACE:
+                        game_state = STATE_PLAYING
+                        show_controls = False # Auto hide on start
+                
+                elif game_state == STATE_GAME_OVER:
+                    if event.key == pygame.K_SPACE:
+                        # Restart Game
+                        # Re-run setup logic
+                        generator.reset()
+                        start_x, start_y = generator.get_random_floor_point()
+                        player.x, player.y = start_x, start_y
+                        player.hp = player.max_hp
+                        
+                        enemies = []
+                        for _ in range(10): 
+                            ex, ey = generator.get_random_floor_point()
+                            while ex == start_x and ey == start_y:
+                                ex, ey = generator.get_random_floor_point()
+                            enemies.append(Goblin(ex, ey))
+                            
+                        visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, generator.grid)
+                        explored_tiles = set(visible_tiles)
+                        update_minimap()
+                        
+                        game_state = STATE_PLAYING
+                
+                elif game_state == STATE_PLAYING:
+                    if event.key == pygame.K_m:
+                        show_minimap = not show_minimap
+                    elif event.key == pygame.K_h:
+                        show_controls = not show_controls
 
+        
+        if game_state == STATE_START:
+            screen.fill((0, 0, 0))
+            draw_text_centered(screen, "CAVE EXPLORER", title_font, (255, 255, 255), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3)
+            
+            controls = [
+                "Controls:",
+                "Arrow Keys: Move & Attack",
+                "M: Toggle Minimap",
+                "H: Toggle Controls Popup",
+                "",
+                "Press SPACE to Start"
+            ]
+            
+            for i, line in enumerate(controls):
+                draw_text_centered(screen, line, font, (200, 200, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + i * 30)
+                
+            pygame.display.flip()
+            continue
+            
+        elif game_state == STATE_GAME_OVER:
+            screen.fill((50, 0, 0))
+            draw_text_centered(screen, "GAME OVER", title_font, (255, 0, 0), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3)
+            
+            draw_text_centered(screen, "You have fallen in the dark...", font, (200, 200, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+            draw_text_centered(screen, "Press SPACE to Restart", font, (255, 255, 255), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+            
+            pygame.display.flip()
+            continue
+
+        # --- GAMEPLAY LOGIC (STATE_PLAYING) ---
+        
+        # Check Player Death
+        if player.hp <= 0:
+            game_state = STATE_GAME_OVER
         
         # Continuous Input Handling
         keys = pygame.key.get_pressed()
@@ -347,7 +521,11 @@ def main():
             if current_time - last_move_time > MOVE_DELAY:
                 # Handle diagonal speed? 
                 # For now, uniform speed logic
-                if player.move(dx, dy, generator.grid):
+                
+                # Pass all entities (enemies + player) to check collision
+                all_entities = enemies + [player]
+                
+                if player.try_move(dx, dy, generator.grid, all_entities):
                     last_move_time = current_time
                     # Update FOV
                     visible_tiles = compute_fov(player.x, player.y, FOV_RADIUS, generator.grid)
@@ -355,13 +533,25 @@ def main():
                     # Update minimap
                     update_minimap()
 
+        # Update Enemies independent of player input
+        current_time = pygame.time.get_ticks()
+        if current_time - last_enemy_move_time > ENEMY_MOVE_DELAY:
+            # Clean up dead enemies
+            active_enemies = [e for e in enemies if e.hp > 0]
+            enemies = active_enemies
+            
+            all_entities = enemies + [player]
+            
+            for enemy in enemies:
+                enemy.update(player, generator.grid, visible_tiles, all_entities)
+            last_enemy_move_time = current_time
+
         # Update Camera
         camera.update(player)
         
         # Drawing
-        render_view(screen, camera, generator.grid, visible_tiles, explored_tiles)
-        
-        player.draw(screen, TILE_SIZE, camera)
+        render_view(screen, camera, generator.grid, visible_tiles, explored_tiles, enemies + [player])
+
         
         # Draw Minimap
         if show_minimap:
@@ -378,8 +568,49 @@ def main():
             my = int(player.y / MAP_HEIGHT * MINIMAP_SIZE[1])
             pygame.draw.rect(screen, PLAYER_COLOR, (minimap_pos[0] + mx, minimap_pos[1] + my, 3, 3))
             
-        # Draw UI Legend
-        legend_text = font.render("Arrows: Move | M: Toggle Map", True, (255, 255, 255))
+        if show_minimap:
+            # Draw border
+            border_rect = (SCREEN_WIDTH - MINIMAP_SIZE[0] - 10, 10, MINIMAP_SIZE[0] + 2, MINIMAP_SIZE[1] + 2)
+            pygame.draw.rect(screen, (255, 255, 255), border_rect, 1)
+            
+            # Blit minimap
+            minimap_pos = (SCREEN_WIDTH - MINIMAP_SIZE[0] - 9, 11)
+            screen.blit(minimap_surface, minimap_pos)
+            
+            # Draw player on minimap
+            mx = int(player.x / MAP_WIDTH * MINIMAP_SIZE[0])
+            my = int(player.y / MAP_HEIGHT * MINIMAP_SIZE[1])
+            pygame.draw.rect(screen, PLAYER_COLOR, (minimap_pos[0] + mx, minimap_pos[1] + my, 3, 3))
+            
+        # Draw UI Legend (Always separate)
+        legend_text = font.render(f"HP: {player.hp}/{player.max_hp} | Controls: H", True, (255, 255, 255))
+        pygame.draw.rect(screen, (0, 0, 0), (5, 5, legend_text.get_width() + 10, legend_text.get_height() + 10))
+        pygame.draw.rect(screen, (255, 255, 255), (5, 5, legend_text.get_width() + 10, legend_text.get_height() + 10), 1)
+        screen.blit(legend_text, (10, 10))
+        
+        # Draw Controls Popup
+        if show_controls:
+            popup_lines = [
+                "Controls:",
+                "Arrows: Move/Attack",
+                "M: Minimap",
+                "H: Toggle this menu"
+            ]
+            
+            # Calculate size
+            popup_width = 200
+            popup_height = len(popup_lines) * 25 + 20
+            popup_x = SCREEN_WIDTH // 2 - popup_width // 2
+            popup_y = SCREEN_HEIGHT // 2 - popup_height // 2
+            
+            # Draw Popup Background
+            pygame.draw.rect(screen, (0, 0, 0), (popup_x, popup_y, popup_width, popup_height))
+            pygame.draw.rect(screen, (255, 255, 255), (popup_x, popup_y, popup_width, popup_height), 2)
+            
+            for i, line in enumerate(popup_lines):
+                 line_surf = font.render(line, True, (255, 255, 255))
+                 screen.blit(line_surf, (popup_x + 10, popup_y + 10 + i * 25))
+
         # Add a small shadow/outline for visibility
         pygame.draw.rect(screen, (0, 0, 0), (5, 5, legend_text.get_width() + 10, legend_text.get_height() + 10))
         pygame.draw.rect(screen, (255, 255, 255), (5, 5, legend_text.get_width() + 10, legend_text.get_height() + 10), 1)
