@@ -25,6 +25,8 @@ GOBLIN_COLOR = (0, 255, 0) # Green goblin
 STAIRS_DOWN_COLOR = (255, 255, 0) # Yellow
 STAIRS_UP_COLOR = (0, 100, 255) # Blue
 POTION_COLOR = (255, 50, 200) # Pink/Reddish Potion
+SWORD_COLOR = (0, 255, 255) # Cyan
+SHIELD_COLOR = (150, 150, 255) # Light Blue
 UI_BG_COLOR = (30, 30, 30)
 UI_HEIGHT = 150
 UI_BORDER_COLOR = (100, 100, 100)
@@ -112,6 +114,11 @@ class Entity:
         # Check Potions
         if grid[new_x, new_y] == 4:
             return "potion"
+        # Check Equipment
+        if grid[new_x, new_y] == 5:
+            return "sword"
+        if grid[new_x, new_y] == 6:
+            return "shield"
             
         # 3. Check Entities (Collision/Combat)
         for entity in entities:
@@ -165,9 +172,41 @@ class Entity:
 
 class Player(Entity):
     def __init__(self, x, y):
-        super().__init__(x, y, PLAYER_COLOR, "Player", hp=30, ac=14, strength=2)
+        super().__init__(x, y, PLAYER_COLOR, "Player", hp=30, ac=10, strength=2)
+        # Base stats (unmodified by gear)
+        self.base_strength = 2
+        self.base_ac = 10
+        self.base_max_hp = 30
+        
         self.xp_to_next_level = 100
         self.potions = 0 # Inventory
+        
+        # Equipment
+        self.weapon_tier = 0
+        self.armor_tier = 0
+        self.update_stats()
+        
+    def update_stats(self):
+        # Stats = Base + Gear
+        self.strength = self.base_strength + (self.weapon_tier * 2)
+        self.ac = self.base_ac + (self.armor_tier * 2)
+        # HP is handled directly via max_hp updates on level up
+        
+    def level_up(self, message_log):
+        self.level += 1
+        self.xp -= self.xp_to_next_level
+        self.xp_to_next_level = int(self.xp_to_next_level * 1.5)
+        
+        # Stat Increases
+        self.base_max_hp += 10
+        self.max_hp = self.base_max_hp
+        self.hp = self.max_hp 
+        self.base_strength += 1
+        
+        self.update_stats()
+        
+        message_log.add_message(f"LEVEL UP! You are now level {self.level}!", (0, 255, 0))
+        message_log.add_message(f"Max HP +10, Base Str +1", (0, 255, 0))
         
     def heal(self, amount, message_log):
         if self.hp == self.max_hp:
@@ -182,7 +221,7 @@ class Player(Entity):
 
 class Goblin(Entity):
     def __init__(self, x, y):
-        super().__init__(x, y, GOBLIN_COLOR, "Goblin", hp=10, ac=12, strength=1, xp_reward=20)
+        super().__init__(x, y, GOBLIN_COLOR, "Goblin", hp=15, ac=12, strength=2, xp_reward=20) # Buffed Stats
 
     def update(self, player, grid, visible_tiles, entities, message_log):
         # Simple AI:
@@ -336,6 +375,14 @@ class CaveGenerator:
             # Avoid overwriting stairs
             if self.grid[px, py] == 0:
                 self.grid[px, py] = 4 # 4 = Potion
+
+        # 7. Scatter Equipment (Guaranteed 1 per level: 50/50 Sword or Shield)
+        ex, ey = self.get_random_floor_point()
+        if self.grid[ex, ey] == 0:
+            if random.random() < 0.5:
+                self.grid[ex, ey] = 5 # Sword
+            else:
+                self.grid[ex, ey] = 6 # Shield
 
         return self.grid.copy(), (up_x, up_y), (down_x, down_y)
 
@@ -572,6 +619,10 @@ def main():
                         color = STAIRS_UP_COLOR
                     elif grid[x, y] == 4: # Potion
                         color = POTION_COLOR
+                    elif grid[x, y] == 5: # Sword
+                        color = SWORD_COLOR
+                    elif grid[x, y] == 6: # Shield
+                        color = SHIELD_COLOR
                         
                     rect = (x * TILE_SIZE + camera.x, y * TILE_SIZE + camera.y, TILE_SIZE, TILE_SIZE)
                     # Optimization: draw.rect is fast, but we could batch. This is fine for <500 tiles.
@@ -585,6 +636,10 @@ def main():
                          color = (0, 50, 100)
                     elif grid[x, y] == 4: # Potion seen
                          color = (100, 20, 80)
+                    elif grid[x, y] == 5: # Sword seen
+                         color = (0, 100, 100)
+                    elif grid[x, y] == 6: # Shield seen
+                         color = (50, 50, 100)
                          
                     rect = (x * TILE_SIZE + camera.x, y * TILE_SIZE + camera.y, TILE_SIZE, TILE_SIZE)
                     pygame.draw.rect(screen, color, rect)
@@ -600,7 +655,21 @@ def main():
         minimap_surface.fill((0,0,0))
         # Draw all explored tiles
         for (x, y) in explored_tiles:
-            color = WALL_COLOR if levels[dungeon_level].grid[x, y] == 1 else FLOOR_COLOR
+            tile_id = levels[dungeon_level].grid[x, y]
+            color = FLOOR_COLOR
+            if tile_id == 1:
+                color = WALL_COLOR
+            elif tile_id == 2:
+                color = STAIRS_DOWN_COLOR
+            elif tile_id == 3:
+                color = STAIRS_UP_COLOR
+            elif tile_id == 4:
+                color = POTION_COLOR
+            elif tile_id == 5:
+                color = SWORD_COLOR
+            elif tile_id == 6:
+                color = SHIELD_COLOR
+                
             # Simple pixel set
             # Rect size
             rect = (x * MM_SCALE_X, y * MM_SCALE_Y, max(1, MM_SCALE_X), max(1, MM_SCALE_Y))
@@ -744,6 +813,24 @@ def main():
                     
                     message_log.add_message("You pick up a Health Potion.", (255, 100, 255))
                     action_taken = True
+                    
+                elif result == "sword":
+                    player.weapon_tier += 1
+                    player.update_stats()
+                    grid[player.x + dx, player.y + dy] = 0
+                    player.x += dx
+                    player.y += dy
+                    message_log.add_message(f"Upgrade! You found a Weapon Upgrade (+2 Str)!", SWORD_COLOR)
+                    action_taken = True
+                    
+                elif result == "shield":
+                    player.armor_tier += 1
+                    player.update_stats()
+                    grid[player.x + dx, player.y + dy] = 0
+                    player.x += dx
+                    player.y += dy
+                    message_log.add_message(f"Upgrade! You found an Armor Upgrade (+2 AC)!", SHIELD_COLOR)
+                    action_taken = True
                 
                 elif result == "stairs_down":
                     # Save current level state
@@ -855,6 +942,10 @@ def main():
         # Stats & Level
         hp_text = font.render(f"HP: {player.hp}/{player.max_hp}", True, (255, 255, 255))
         screen.blit(hp_text, (220, SCREEN_HEIGHT - 140))
+        
+        # Display Stats with Gear bonuses
+        stats_text = font.render(f"Str: {player.strength} (Wep+{player.weapon_tier*2}) | AC: {player.ac} (Arm+{player.armor_tier*2})", True, (200, 255, 200))
+        screen.blit(stats_text, (400, SCREEN_HEIGHT - 140))
         
         level_text = font.render(f"Lvl: {player.level} (XP: {player.xp}/{player.xp_to_next_level}) | Depth: {dungeon_level}", True, (200, 200, 255))
         screen.blit(level_text, (10, SCREEN_HEIGHT - 110))
